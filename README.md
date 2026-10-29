@@ -44,12 +44,25 @@ py demo_target.py
 ```
 Then enter `http://127.0.0.1:8080` in VulnX and click **Run assessment**. The result is only a basic header/configuration assessment.
 
+To verify the exposure checks end to end, start the fixture with clearly synthetic fake sensitive files instead:
+```powershell
+py demo_target.py --expose-test-fixtures
+```
+This mode serves a fake `/.env`, `/.git/HEAD` and `/phpinfo.php` (all invented placeholder values, never real credentials) so the scanner reports real High/Medium exposure findings against a target you control. Run `py demo_target.py` without the flag as the fixed negative control: no exposure findings should appear.
+
 ## What this MVP checks
 - Missing Content-Security-Policy (informational/low-priority configuration observation)
 - Missing X-Content-Type-Options
 - Missing Referrer-Policy
 - Missing frame protection (X-Frame-Options or CSP `frame-ancestors`)
 - HTTPS use (HTTP localhost is allowed for testing and will be reported as an observation, not as a vulnerability)
+- Exposed sensitive files and debug information: one GET each on a fixed list of well-known paths (`/.env`, `/.git/HEAD`, `/phpinfo.php`, `/server-status`, `/actuator/env`, `/debug/vars`) of the loopback origin you entered.
+
+Exposure-check findings are evidence-based:
+- A finding requires HTTP 200 **and** a positive content marker for that file type.
+- A 200 that returns the same body as the base page is treated as a catch-all route and skipped (false-positive control).
+- Evidence is redacted: `.env` findings report key names only, never values; status/debug pages report only that the marker was observed.
+- Severity reflects the exposure (`.env` and `.git` metadata = High, debug/status pages = Medium). Exploitation evidence remains zero because the tool never attempts exploitation.
 
 Not every missing header is automatically a vulnerability; assess findings in context. The code intentionally avoids testing for SQL injection, XSS, authentication bypass, or other exploit-oriented conditions.
 
@@ -99,13 +112,15 @@ npm run preview
 Preview uses port 4173, allowed by the backend CORS configuration. The dev server fails clearly if 5173 is busy rather than silently moving to a CORS-blocked port. For a non-default API address, set VITE_API_URL before starting/building the frontend. This does not authorize exposing the backend publicly.
 
 ## What results mean
-The included HTTP demo intentionally omits checked headers. A local test gives five configuration observations: three Low and two Informational, all P4 - Low, top score 1.8. These are fixture results, not measurements of your friend's machine or a real production deployment. High/Critical counters remain zero because no High/Critical detector is implemented. Never inflate a severity or invent a finding to populate those cards.
+The included HTTP demo intentionally omits checked headers. A local test gives five configuration observations: three Low and two Informational, all P4 - Low, top score 1.8. These are fixture results, not measurements of your friend's machine or a real production deployment. In default mode the exposure probes correctly find nothing, so High/Critical counters remain zero. With `--expose-test-fixtures`, the observed synthetic `.env` and `.git` exposures are reported as High. Never inflate a severity or invent a finding to populate those cards.
 
 The formula is `0.40*severity_base + 0.20*exposure + 0.25*exploitation_evidence + 0.15*impact`. This starter sets exploitation evidence to zero. Weights are illustrative, not CVSS or a prediction of exploitation.
 
 ## Honest feature boundaries
-Implemented: loopback URL validation, one HTTP GET without following redirects, selected missing-header checks, illustrative scoring, SQLite history and a dashboard.
-Not implemented: network discovery, attack graphs, Nmap/OpenVAS/ZAP integration, CVE/CVSS lookup, exploit checks, authentication, PDF export, working navigation pages or job queues. Sidebar labels other than Overview are placeholders. Saved scans do not preserve HTTP status or the limitation string; this is a known history-metadata limitation. Header presence is not proof that the header value is safe.
+Implemented: loopback URL validation, one HTTP GET without following redirects, selected missing-header checks, a bounded set of evidence-based exposed sensitive-file probes with redacted evidence, illustrative scoring, SQLite history and a dashboard.
+Not implemented: network discovery, attack graphs, Nmap/OpenVAS/ZAP integration, CVE/CVSS lookup, exploit checks, authentication, PDF export, working navigation pages or job queues. Sidebar labels other than Overview are placeholders. Saved scans do not preserve HTTP status or the limitation string; this is a known history-metadata limitation. Header presence is not proof that the header value is safe. The exposure probes cover only their fixed path list and their specific content markers; a clean result does not prove no sensitive file is exposed.
 
 ## High/Critical simulated training mode
-Use "Load simulated demo" for separate synthetic High/Critical examples. No target is scanned. The API, database, history and selected view retain `assessment_kind=simulated`; simulated records do not count as real assessments. Their titles, evidence and UI banner explicitly say simulated. The illustrative scores are 9.8 (Critical/P1) and 7.8 (High/P2). These invented values do not show that a real vulnerability exists. Genuine High/Critical detection remains unimplemented.
+Use "Load simulated demo" for separate synthetic High/Critical examples. No target is scanned. The API, database, history and selected view retain `assessment_kind=simulated`; simulated records do not count as real assessments. Their titles, evidence and UI banner explicitly say simulated. The illustrative scores are 9.8 (Critical/P1) and 7.8 (High/P2). These invented values do not show that a real vulnerability exists.
+
+Real High/Medium exposure detection is implemented only for the fixed probe list above, with the content-marker, catch-all and redaction controls described there. Detection of exploit-oriented High/Critical conditions (injection, auth bypass, RCE and similar) remains unimplemented by design.
