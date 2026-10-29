@@ -79,7 +79,7 @@ export default function App() {
     <main className="main">
       <header className="topbar"><div><span className="eyebrow">SECURITY OPERATIONS / OVERVIEW</span><h1>Vulnerability overview</h1><p>Assess local test targets and prioritize security findings.</p></div><div className="status-pill"><span className="dot"></span> Local API workspace</div></header>
       {error && <div className="alert">{error}</div>}
-      <section className="notice"><strong>Academic MVP · Local-only scanner</strong><span>This prototype performs basic HTTP response-header checks. It is not a full security scan.</span></section>
+      <section className="notice"><strong>Academic MVP · Local-only scanner</strong><span>This prototype performs basic HTTP response-header checks and probes a fixed list of well-known exposed sensitive files. It is not a full security scan.</span></section>
       <section className="panel scan-panel">
         <div className="section-head"><div><h2>New assessment</h2><p>Enter a local target that you own or are authorized to test.</p></div><span className="tag">SAFE MODE</span></div>
         <form onSubmit={runScan} className="scan-form">
@@ -93,7 +93,7 @@ export default function App() {
       <section className="metrics">
         <Metric label="ASSESSMENTS" value={scans.filter(s=>s.assessment_kind !== 'simulated').length} note="Real completed assessments only"/>
         <Metric label={simulated ? "SIMULATED FINDINGS" : "FINDINGS IN VIEW"} value={findings.length} note="Selected assessment"/>
-        <Metric label={simulated ? "SIMULATED HIGH / CRITICAL" : "HIGH / CRITICAL"} value={findings.filter(f=>['High','Critical'].includes(f.severity)).length} note={simulated ? "Invented examples, not detections" : "Zero is expected for these basic checks"}/>
+        <Metric label={simulated ? "SIMULATED HIGH / CRITICAL" : "HIGH / CRITICAL"} value={findings.filter(f=>['High','Critical'].includes(f.severity)).length} note={simulated ? "Invented examples, not detections" : "Non-zero only when exposure evidence is observed"}/>
         <Metric label="TOP RISK SCORE" value={findings.length ? Math.max(...findings.map(f=>f.risk_score)).toFixed(1) : '—'} note="Illustrative 0–10 score"/>
       </section>
       <section className="content-grid">
