@@ -22,16 +22,50 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'local fixture')
     def log_message(self, *args): pass
 
+class ExposedHandler(BaseHTTPRequestHandler):
+    """Serves clearly synthetic fake sensitive files; 404 for everything else."""
+    FIXTURES = {
+        '/.env': b'TEST_DATABASE_PASSWORD=fake-not-real\nTEST_API_KEY=DEMO-0000-NOT-REAL\n',
+        '/.git/HEAD': b'ref: refs/heads/main\n',
+        '/phpinfo.php': b'<html><title>phpinfo()</title><h1>PHP Version 8.1 (synthetic fixture)</h1></html>',
+    }
+    def do_GET(self):
+        if self.path in self.FIXTURES or self.path == '/':
+            body = self.FIXTURES.get(self.path, b'<h1>fixture root</h1>')
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+    def log_message(self, *args): pass
+
+class NotFoundHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(404)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+    def log_message(self, *args): pass
+
 class AppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        cls.exposed = ThreadingHTTPServer(('127.0.0.1', 0), ExposedHandler)
+        cls.notfound = ThreadingHTTPServer(('127.0.0.1', 0), NotFoundHandler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
-        cls.thread.start()
+        cls.thread2 = threading.Thread(target=cls.exposed.serve_forever, daemon=True)
+        cls.thread3 = threading.Thread(target=cls.notfound.serve_forever, daemon=True)
+        cls.thread.start(); cls.thread2.start(); cls.thread3.start()
         cls.target = f'http://127.0.0.1:{cls.server.server_port}'
+        cls.exposed_target = f'http://127.0.0.1:{cls.exposed.server_port}'
+        cls.notfound_target = f'http://127.0.0.1:{cls.notfound.server_port}'
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown(); cls.server.server_close(); cls.thread.join()
+        for srv, thr in ((cls.server, cls.thread), (cls.exposed, cls.thread2), (cls.notfound, cls.thread3)):
+            srv.shutdown(); srv.server_close(); thr.join()
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.dbpatch = patch.object(db, 'DB_PATH', Path(self.temp.name) / 'test.sqlite3')
@@ -74,6 +108,35 @@ class AppTests(unittest.TestCase):
         saved = self.client.get(f'/api/scans/{data["id"]}').json()
         self.assertEqual(saved['assessment_kind'],'simulated')
         self.assertEqual(self.client.get('/api/scans').json()[0]['assessment_kind'],'simulated')
+
+    def test_exposed_files_detected_with_redacted_evidence(self):
+        data = self.client.post('/api/scans', json={'target': self.exposed_target}).json()
+        by_title = {f['title']: f for f in data['findings']}
+        env = by_title.get('Exposed environment configuration file (.env)')
+        git = by_title.get('Exposed Git repository metadata')
+        php = by_title.get('Exposed PHP debug information page (phpinfo)')
+        self.assertIsNotNone(env); self.assertIsNotNone(git); self.assertIsNotNone(php)
+        self.assertEqual(env['severity'], 'High')
+        self.assertEqual(git['severity'], 'High')
+        self.assertEqual(php['severity'], 'Medium')
+        # key names are reported, secret values are never reproduced
+        self.assertIn('TEST_DATABASE_PASSWORD', env['evidence'])
+        self.assertIn('redacted', env['evidence'])
+        all_evidence = ' '.join(f['evidence'] for f in data['findings'])
+        self.assertNotIn('fake-not-real', all_evidence)
+        self.assertNotIn('DEMO-0000-NOT-REAL', all_evidence)
+        self.assertIn('ref: refs/heads/main', git['evidence'])
+
+    def test_no_exposure_findings_when_paths_404(self):
+        data = self.client.post('/api/scans', json={'target': self.notfound_target}).json()
+        for f in data['findings']:
+            self.assertNotIn('Exposed', f['title'])
+
+    def test_catch_all_route_is_not_reported_as_exposure(self):
+        # The basic Handler returns the same body for every path; probes must not fire.
+        data = self.client.post('/api/scans', json={'target': self.target}).json()
+        for f in data['findings']:
+            self.assertNotIn('Exposed', f['title'])
 
     def test_missing_scan(self):
         self.assertEqual(self.client.get('/api/scans/999').status_code,404)
